@@ -13,7 +13,8 @@ A lightweight, terminal-based peer-to-peer (P2P) chat and file-sharing tool writ
   - Lightweight file offer sent prior to data transfer.
   - Recipient approval (`y/n`) prompt before file bytes are transmitted.
   - Original filename and file size preservation.
-- **Directory Configuration:** Ability to configure and update the default download directory on the fly.
+- **Display Names:** Use `/user <name>` to set your identity — peers see `[YourName]: ...` instead of the generic `[Peer]`.
+- **Commands & Help:** Press `/help` or `/?` at any time for a full command reference.
 - **Cross-Platform:** Runs on macOS, Linux, and Windows.
 
 ---
@@ -89,35 +90,64 @@ Once connected, a confirmation header will appear:
 🎉 P2P WEBRTC DATA CHANNEL ESTABLISHED!
 Commands:
   - Type any message and press Enter to chat.
-  - Type '/dir <path>' to set default download directory.
-  - Type '/file <path>' to send a file.
+  - Type '/help' or '/?' for this menu.
 Current Download Directory: .
 =======================================================
 > 
 ```
 
 ### 1. Interactive Chat
-Type any text and press **Enter** to broadcast a real-time message to your peer:
+
+Type any text and press **Enter** to send a real-time message to your peer. If you've set a display name with `/user`, peers will see your name in the message:
+
 ```text
 > Hello from Terminal 1!
-[Peer]: Hey there!
+[Alice]: Hey there!
 ```
 
-### 2. Configure Download Directory
+### 2. Help Menu
+
+At any time during a session, press `/help` or `/?` for a full command reference:
+
+```text
+> /help
+Available commands:
+Your Display Name: (not set)
+  Type '/dir <path>' to set default download directory.
+  Type '/file <path>' to send a file.
+  Type '/user <name>' to set your display name.
+  Type '/help' or '/?' for this menu.
+
+> 
+```
+
+### 3. Set Your Display Name
+
+Use `/user <name>` to set an identity that peers see instead of the generic `[Peer]`:
+
+```text
+> /user Alice
+Display name set to: 'Alice'
+[*] Peer's display name updated to: 'Bob'
+> Hey Bob!
+[Alice]: Hi Alice!
+```
+
+### 4. Configure Download Directory
 By default, received files save to the current working directory (`.`). You can change this at any time:
 ```text
 > /dir /Users/abhishekkumar/Downloads
 Default download directory updated to: /Users/abhishekkumar/Downloads
 ```
 
-### 3. Send a File
+### 5. Send a File
 Use `/file` followed by the absolute or relative file path (quotes and spaces are automatically trimmed):
 ```text
 > /file "/Users/abhishekkumar/Documents/sample.pdf"
 Sent file offer for 'sample.pdf'. Waiting for peer approval...
 ```
 
-### 4. Accept / Reject Incoming Files
+### 6. Accept / Reject Incoming Files
 When a peer offers a file, you will be prompted to accept or decline:
 ```text
 [Incoming File Offer]: 'sample.pdf' (1048576 bytes)
