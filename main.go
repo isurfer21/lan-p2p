@@ -14,6 +14,22 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
+// Protocol Message Structure
+type Message struct {
+	Type      string `json:"type"` // "CHAT", "FILE_OFFER", "FILE_ACCEPT", "FILE_REJECT", "FILE_DATA"
+	Content   string `json:"content,omitempty"`
+	FileName  string `json:"fileName,omitempty"`
+	FileSize  int64  `json:"fileSize,omitempty"`
+	FileBytes []byte `json:"fileBytes,omitempty"`
+}
+
+// App State
+var defaultDownloadDir = "."
+var pendingOffer *Message
+var waitingForAcceptance = false
+var localDataChannel *webrtc.DataChannel
+var senderFilePath string // Tracks file waiting to be sent upon acceptance
+
 func main() {
 	config := webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{},
@@ -50,6 +66,7 @@ func main() {
 		fmt.Println("[*] Peer connected! Exchanging WebRTC metadata...")
 
 		peerConnection.OnDataChannel(func(dc *webrtc.DataChannel) {
+			localDataChannel = dc
 			setupDataChannel(dc)
 		})
 
@@ -92,6 +109,7 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
+		localDataChannel = dataChannel
 		setupDataChannel(dataChannel)
 
 		offer, err := peerConnection.CreateOffer(nil)
@@ -106,12 +124,9 @@ func main() {
 		<-gatherComplete
 
 		fmt.Printf("[*] Connecting to receiver at %s:8080...\n", receiverIP)
-
-		// ADDED: 3-second timeout so it fails gracefully instead of hanging forever
 		conn, err := net.DialTimeout("tcp", receiverIP+":8080", 3*time.Second)
 		if err != nil {
-			fmt.Printf("[-] Connection failed or timed out: %v\n", err)
-			fmt.Println("[-] Hint: If testing locally on the same Mac, use '127.0.0.1' instead of your Wi-Fi IP.")
+			fmt.Printf("[-] Connection failed: %v\n", err)
 			return
 		}
 		defer conn.Close()
@@ -136,18 +151,16 @@ func main() {
 	select {}
 }
 
-type FileMessage struct {
-	FileName  string `json:"fileName"`
-	FileBytes []byte `json:"fileBytes"`
-}
-
 func setupDataChannel(dc *webrtc.DataChannel) {
 	dc.OnOpen(func() {
-		fmt.Printf("\n========================================\n")
+		fmt.Printf("\n=======================================================\n")
 		fmt.Printf("🎉 P2P WEBRTC DATA CHANNEL ESTABLISHED!\n")
-		fmt.Printf("Type your message and press Enter to chat.\n")
-		fmt.Printf("Type '/file <path>' to send a file.\n")
-		fmt.Printf("========================================\n> ")
+		fmt.Printf("Commands:\n")
+		fmt.Printf("  - Type any message and press Enter to chat.\n")
+		fmt.Printf("  - Type '/dir <path>' to set default download directory.\n")
+		fmt.Printf("  - Type '/file <path>' to send a file.\n")
+		fmt.Printf("Current Download Directory: %s\n", defaultDownloadDir)
+		fmt.Printf("=======================================================\n> ")
 		go startTerminalChat(dc)
 	})
 
@@ -156,28 +169,58 @@ func setupDataChannel(dc *webrtc.DataChannel) {
 	})
 
 	dc.OnMessage(func(msg webrtc.DataChannelMessage) {
-		if msg.IsString {
-			var fileMsg FileMessage
-			err := json.Unmarshal([]byte(msg.Data), &fileMsg)
-			if err == nil && fileMsg.FileName != "" {
-				// Automatically save incoming files to current directory to prevent stdin blocking bugs
-				savePath := fileMsg.FileName
-				err = os.WriteFile(savePath, fileMsg.FileBytes, 0644)
-				if err != nil {
-					fmt.Printf("\r[Error saving file]: %v\n> ", err)
-					return
-				}
-				fmt.Printf("\r[File Received & Saved]: '%s' (%d bytes)\n> ", savePath, len(fileMsg.FileBytes))
-			} else {
-				fmt.Printf("\r[Peer]: %s\n> ", string(msg.Data))
+		if !msg.IsString {
+			return
+		}
+
+		var m Message
+		if err := json.Unmarshal(msg.Data, &m); err != nil {
+			return
+		}
+
+		switch m.Type {
+		case "CHAT":
+			fmt.Printf("\r[Peer]: %s\n> ", m.Content)
+
+		case "FILE_OFFER":
+			pendingOffer = &m
+			waitingForAcceptance = true
+			fmt.Printf("\n[Incoming File Offer]: '%s' (%d bytes)\n", m.FileName, m.FileSize)
+			fmt.Printf("Do you want to accept this file? (y/n): ")
+
+		case "FILE_ACCEPT":
+			// Receiver accepted! Now transmit the actual file bytes.
+			if senderFilePath == "" {
+				return
 			}
-		} else {
-			err := os.WriteFile("received_file.bin", msg.Data, 0644)
+			data, err := os.ReadFile(senderFilePath)
+			if err != nil {
+				fmt.Printf("\r[Error reading file for transfer]: %v\n> ", err)
+				return
+			}
+
+			dataMsg := Message{
+				Type:      "FILE_DATA",
+				FileName:  filepath.Base(senderFilePath),
+				FileBytes: data,
+			}
+			payload, _ := json.Marshal(dataMsg)
+			dc.SendText(string(payload))
+			fmt.Printf("\r[File Sent Successfully]: '%s'\n> ", filepath.Base(senderFilePath))
+			senderFilePath = ""
+
+		case "FILE_REJECT":
+			fmt.Printf("\r[File Rejected]: Peer declined '%s'.\n> ", m.FileName)
+			senderFilePath = ""
+
+		case "FILE_DATA":
+			savePath := filepath.Join(defaultDownloadDir, m.FileName)
+			err := os.WriteFile(savePath, m.FileBytes, 0644)
 			if err != nil {
 				fmt.Printf("\r[Error saving file]: %v\n> ", err)
 				return
 			}
-			fmt.Printf("\r[File Received]: saved as 'received_file.bin' (%d bytes)\n> ", len(msg.Data))
+			fmt.Printf("\r[File Received & Saved]: '%s' (%d bytes)\n> ", savePath, len(m.FileBytes))
 		}
 	})
 }
@@ -186,34 +229,74 @@ func startTerminalChat(dc *webrtc.DataChannel) {
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
 		text := scanner.Text()
+
+		// 1. Handle incoming file acceptance prompt state
+		if waitingForAcceptance {
+			waitingForAcceptance = false
+			answer := strings.TrimSpace(strings.ToLower(text))
+			if answer == "y" || answer == "yes" {
+				// Send ACCEPT response
+				resp := Message{
+					Type:     "FILE_ACCEPT",
+					FileName: pendingOffer.FileName,
+				}
+				payload, _ := json.Marshal(resp)
+				dc.SendText(string(payload))
+				fmt.Printf("[*] File accepted. Waiting for transmission...\n> ")
+			} else {
+				// Send REJECT response
+				resp := Message{
+					Type:     "FILE_REJECT",
+					FileName: pendingOffer.FileName,
+				}
+				payload, _ := json.Marshal(resp)
+				dc.SendText(string(payload))
+				fmt.Printf("[*] File rejected.\n> ")
+			}
+			pendingOffer = nil
+			continue
+		}
+
+		// 2. Handle configuration of default download directory
+		if strings.HasPrefix(text, "/dir ") {
+			dirPath := strings.TrimPrefix(text, "/dir ")
+			dirPath = strings.TrimSpace(dirPath)
+			dirPath = strings.Trim(dirPath, "\"'")
+
+			info, err := os.Stat(dirPath)
+			if err != nil || !info.IsDir() {
+				fmt.Printf("Invalid directory path: %s\n> ", dirPath)
+				continue
+			}
+
+			defaultDownloadDir = dirPath
+			fmt.Printf("Default download directory updated to: %s\n> ", defaultDownloadDir)
+			continue
+		}
+
+		// 3. Handle sending a file offer
 		if strings.HasPrefix(text, "/file ") {
 			rawPath := strings.TrimPrefix(text, "/file ")
 			rawPath = strings.TrimSpace(rawPath)
 			rawPath = strings.Trim(rawPath, "\"'")
 
-			data, err := os.ReadFile(rawPath)
+			info, err := os.Stat(rawPath)
 			if err != nil {
-				fmt.Printf("Error reading file: %v\n> ", err)
+				fmt.Printf("Error accessing file: %v\n> ", err)
 				fmt.Print("> ")
 				continue
 			}
 
-			fileName := filepath.Base(rawPath)
-
-			fileMsg := FileMessage{
-				FileName:  fileName,
-				FileBytes: data,
+			senderFilePath = rawPath
+			fileOffer := Message{
+				Type:     "FILE_OFFER",
+				FileName: info.Name(),
+				FileSize: info.Size(),
 			}
-			jsonBytes, _ := json.Marshal(fileMsg)
+			payload, _ := json.Marshal(fileOffer)
+			dc.SendText(string(payload))
 
-			err = dc.SendText(string(jsonBytes))
-			if err != nil {
-				fmt.Printf("Error sending file: %v\n> ", err)
-				fmt.Print("> ")
-				continue
-			}
-
-			fmt.Printf("File '%s' sent successfully!\n> ", fileName)
+			fmt.Printf("Sent file offer for '%s'. Waiting for peer approval...\n> ", info.Name())
 			continue
 		}
 
@@ -222,7 +305,13 @@ func startTerminalChat(dc *webrtc.DataChannel) {
 			continue
 		}
 
-		err := dc.SendText(text)
+		// 4. Regular chat message
+		chatMsg := Message{
+			Type:    "CHAT",
+			Content: text,
+		}
+		payload, _ := json.Marshal(chatMsg)
+		err := dc.SendText(string(payload))
 		if err != nil {
 			fmt.Printf("Send error: %v\n> ", err)
 			return
