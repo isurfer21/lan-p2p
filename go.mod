@@ -1,4 +1,4 @@
-module lan-p2p-cli
+module lan-p2p
 
 go 1.25.0
 

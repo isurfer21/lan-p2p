@@ -21,10 +21,12 @@ type Message struct {
 	FileName  string `json:"fileName,omitempty"`
 	FileSize  int64  `json:"fileSize,omitempty"`
 	FileBytes []byte `json:"fileBytes,omitempty"`
+	Sender    string `json:"sender,omitempty"` // optional display name
 }
 
 // App State
 var defaultDownloadDir = "."
+var displayName, peerName string
 var pendingOffer *Message
 var waitingForAcceptance = false
 var localDataChannel *webrtc.DataChannel
@@ -157,8 +159,7 @@ func setupDataChannel(dc *webrtc.DataChannel) {
 		fmt.Printf("🎉 P2P WEBRTC DATA CHANNEL ESTABLISHED!\n")
 		fmt.Printf("Commands:\n")
 		fmt.Printf("  - Type any message and press Enter to chat.\n")
-		fmt.Printf("  - Type '/dir <path>' to set default download directory.\n")
-		fmt.Printf("  - Type '/file <path>' to send a file.\n")
+		fmt.Printf("  - Type '/help' or '/?' for this menu.\n")
 		fmt.Printf("Current Download Directory: %s\n", defaultDownloadDir)
 		fmt.Printf("=======================================================\n> ")
 		go startTerminalChat(dc)
@@ -180,7 +181,19 @@ func setupDataChannel(dc *webrtc.DataChannel) {
 
 		switch m.Type {
 		case "CHAT":
-			fmt.Printf("\r[Peer]: %s\n> ", m.Content)
+			sender := peerName
+			if sender == "" && m.Sender != "" {
+				sender = m.Sender
+			}
+			name := "[Peer]"
+			if sender != "" {
+				name = "[" + sender + "]"
+			}
+			fmt.Printf("\r%s: %s\n> ", name, m.Content)
+
+		case "DISPLAY_NAME":
+			peerName = m.Content
+			fmt.Printf("[*] Peer's display name updated to: '%s'\n", m.Content)
 
 		case "FILE_OFFER":
 			pendingOffer = &m
@@ -228,12 +241,12 @@ func setupDataChannel(dc *webrtc.DataChannel) {
 func startTerminalChat(dc *webrtc.DataChannel) {
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
-		text := scanner.Text()
+		text := strings.TrimSpace(scanner.Text())
 
-		// 1. Handle incoming file acceptance prompt state
+		// 0. Handle incoming file acceptance prompt state
 		if waitingForAcceptance {
 			waitingForAcceptance = false
-			answer := strings.TrimSpace(strings.ToLower(text))
+			answer := strings.ToLower(text)
 			if answer == "y" || answer == "yes" {
 				// Send ACCEPT response
 				resp := Message{
@@ -257,12 +270,9 @@ func startTerminalChat(dc *webrtc.DataChannel) {
 			continue
 		}
 
-		// 2. Handle configuration of default download directory
+		// 1. Handle /dir <path> command
 		if strings.HasPrefix(text, "/dir ") {
 			dirPath := strings.TrimPrefix(text, "/dir ")
-			dirPath = strings.TrimSpace(dirPath)
-			dirPath = strings.Trim(dirPath, "\"'")
-
 			info, err := os.Stat(dirPath)
 			if err != nil || !info.IsDir() {
 				fmt.Printf("Invalid directory path: %s\n> ", dirPath)
@@ -274,12 +284,9 @@ func startTerminalChat(dc *webrtc.DataChannel) {
 			continue
 		}
 
-		// 3. Handle sending a file offer
+		// 2. Handle /file <path> command
 		if strings.HasPrefix(text, "/file ") {
 			rawPath := strings.TrimPrefix(text, "/file ")
-			rawPath = strings.TrimSpace(rawPath)
-			rawPath = strings.Trim(rawPath, "\"'")
-
 			info, err := os.Stat(rawPath)
 			if err != nil {
 				fmt.Printf("Error accessing file: %v\n> ", err)
@@ -300,19 +307,57 @@ func startTerminalChat(dc *webrtc.DataChannel) {
 			continue
 		}
 
+		// 3. Handle /user <name> command
+		if strings.HasPrefix(text, "/user ") {
+			name := strings.TrimPrefix(text, "/user ")
+			displayName = name
+
+			// Advertise our display name to the peer
+			dispMsg := Message{Type: "DISPLAY_NAME", Content: displayName}
+			payload, _ := json.Marshal(dispMsg)
+			dc.SendText(string(payload))
+
+			fmt.Printf("Display name set to: '%s'\n> ", displayName)
+			continue
+		}
+
+		// 4. Handle /help or /? command
+		if strings.HasPrefix(text, "/help") || text == "/?" {
+			var line string
+			if displayName != "" {
+				line = fmt.Sprintf("Your Display Name: %s\n", displayName)
+			} else {
+				line = "Your Display Name: (not set)\n"
+			}
+			fmt.Printf(`Available commands:
+` + line + `  Type '/dir <path>' to set default download directory.
+  Type '/file <path>' to send a file.
+  Type '/user <name>' to set your display name.
+  Type '/help' or '/?' for this menu.
+
+> `)
+			continue
+		}
+
 		if text == "" {
 			fmt.Print("> ")
 			continue
 		}
 
-		// 4. Regular chat message
-		chatMsg := Message{
+		// 5. Send chat message
+		m := Message{
 			Type:    "CHAT",
 			Content: text,
 		}
-		payload, _ := json.Marshal(chatMsg)
-		err := dc.SendText(string(payload))
+		if displayName != "" {
+			m.Sender = displayName
+		}
+		payload, err := json.Marshal(m)
 		if err != nil {
+			fmt.Printf("Send error: %v\n> ", err)
+			return
+		}
+		if err := dc.SendText(string(payload)); err != nil {
 			fmt.Printf("Send error: %v\n> ", err)
 			return
 		}
