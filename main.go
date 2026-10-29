@@ -14,6 +14,8 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
+var VERSION = "1.0.1"
+
 // Protocol Message Structure
 type Message struct {
 	Type      string `json:"type"` // "CHAT", "FILE_OFFER", "FILE_ACCEPT", "FILE_REJECT", "FILE_DATA"
@@ -460,9 +462,7 @@ EXAMPLES
 }
 
 func printVersion() {
-	fmt.Println(`
-lan-p2p version 1.0.1
-Copyright (c) 2026 Abhishek Kumar
-Licensed under the MIT License
-  `)
+	fmt.Println("lan-p2p version " + VERSION)
+	fmt.Println("Copyright (c) 2026 Abhishek Kumar")
+	fmt.Println("Licensed under the MIT License")
 }
