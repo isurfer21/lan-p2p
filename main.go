@@ -2,9 +2,11 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+
 	"net"
 	"os"
 	"path/filepath"
@@ -31,6 +33,17 @@ var pendingOffer *Message
 var waitingForAcceptance = false
 var localDataChannel *webrtc.DataChannel
 var senderFilePath string // Tracks file waiting to be sent upon acceptance
+
+// Input History
+var history []string
+var histCursor int
+var currentLine bytes.Buffer
+
+const (
+	historyMax = 50
+	upArrow    = "\x1b[A"
+	downArrow  = "\x1b[B"
+)
 
 func main() {
 	config := webrtc.Configuration{
@@ -204,6 +217,7 @@ func setupDataChannel(dc *webrtc.DataChannel) {
 		fmt.Printf("  - Type any message and press Enter to chat.\n")
 		fmt.Printf("  - Type '/help' or '/?' for this menu.\n")
 		fmt.Printf("=======================================================\n> ")
+		currentLine = bytes.Buffer{} // Reset history-related state on connect
 		go startTerminalChat(dc)
 	})
 
@@ -280,14 +294,25 @@ func setupDataChannel(dc *webrtc.DataChannel) {
 	})
 }
 
-func startTerminalChat(dc *webrtc.DataChannel) {
-	scanner := bufio.NewScanner(os.Stdin)
-	for scanner.Scan() {
-		text := strings.TrimSpace(scanner.Text())
+func clearLine() {
+	fmt.Print("\033[2K\r> ")
+}
 
+func startTerminalChat(dc *webrtc.DataChannel) {
+	reader := bufio.NewReader(os.Stdin)
+
+	for {
 		// 0. Handle incoming file acceptance prompt state
 		if waitingForAcceptance {
+			// Wait for file acceptance (y/n) — disable arrow key history
+			fmt.Print("\n> ")
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				fmt.Println()
+				return
+			}
 			waitingForAcceptance = false
+			text := strings.TrimSpace(line)
 			answer := strings.ToLower(text)
 			if answer == "y" || answer == "yes" {
 				// Send ACCEPT response
@@ -312,6 +337,71 @@ func startTerminalChat(dc *webrtc.DataChannel) {
 			continue
 		}
 
+		rawInput, err := reader.ReadBytes('\n')
+		if err != nil {
+			fmt.Println()
+			return
+		}
+
+		// --- Arrow Key Navigation (only works when currentLine is empty) ---
+		isUpArrow := len(rawInput) == 3 && rawInput[0] == '\x1b' && rawInput[1] == '[' && rawInput[2] == 'A'
+		isDownArrow := len(rawInput) == 3 && rawInput[0] == '\x1b' && rawInput[1] == '[' && rawInput[2] == 'B'
+
+		if currentLine.Len() == 0 && isUpArrow {
+			if histCursor > 0 {
+				clearLine()
+				histCursor--
+				entry := history[histCursor]
+				fmt.Printf(">%s\n> ", entry)
+				currentLine.Reset()
+				currentLine.WriteString(entry)
+			}
+		} else if currentLine.Len() == 0 && isDownArrow {
+			if histCursor < len(history)-1 {
+				clearLine()
+				histCursor++
+				entry := history[histCursor]
+				fmt.Printf(">%s\n> ", entry)
+				currentLine.Reset()
+				currentLine.WriteString(entry)
+			}
+		} else if isUpArrow || isDownArrow {
+			// Arrow pressed on non-empty line — ignore to preserve user input
+		} else {
+			// Normal character processing
+			for _, b := range rawInput {
+				if currentLine.Len() >= 1024 {
+					break
+				}
+
+				// Handle escape key — skip any partial arrow sequences
+				if b == '\r' || b == '\n' {
+					break
+				}
+
+				currentLine.WriteByte(b)
+			}
+			fmt.Printf("%s\r> %s", currentLine.String(), " ")
+		}
+
+		// --- End of line processing ---
+		text := strings.TrimSpace(currentLine.String())
+		if text == "" {
+			clearLine()
+			continue
+		}
+
+		// Add to history (only if not already the last entry)
+		if len(history) == 0 || history[len(history)-1] != text {
+			history = append(history, text)
+			if len(history) > historyMax {
+				history = history[1:]
+			}
+			histCursor = len(history) - 1
+		}
+
+		currentLine.Reset()
+
 		// 1. Handle /dir <path> command
 		if strings.HasPrefix(text, "/dir ") {
 			dirPath := strings.TrimPrefix(text, "/dir ")
@@ -332,7 +422,6 @@ func startTerminalChat(dc *webrtc.DataChannel) {
 			info, err := os.Stat(rawPath)
 			if err != nil {
 				fmt.Printf("Error accessing file: %v\n> ", err)
-				fmt.Print("> ")
 				continue
 			}
 
@@ -390,11 +479,6 @@ Available Commands:
 			continue
 		}
 
-		if text == "" {
-			fmt.Print("> ")
-			continue
-		}
-
 		// 5. Send chat message
 		m := Message{
 			Type:    "CHAT",
@@ -412,7 +496,6 @@ Available Commands:
 			fmt.Printf("Send error: %v\n> ", err)
 			return
 		}
-		fmt.Print("> ")
 	}
 }
 

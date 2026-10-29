@@ -166,13 +166,24 @@ Commands:
 > 
 ```
 
-### 1. Interactive Chat
+### 1. Interactive Chat & Input History
 
 Type any text and press **Enter** to send a real-time message to your peer. If you've set a display name with `/user`, peers will see your name in the message:
 
 ```text
 > Hello from Terminal 1!
 [Alice]: Hey there!
+```
+
+**Input History (Up/Down Arrows):** Every non-command message you send is saved to an in-session history. When the prompt is blank, press **↑ Up Arrow** to recall your previous messages and **↓ Down Arrow** to navigate forward. This avoids re-typing the same command or message:
+
+```text
+> How's it going?                           ← sent, saved to history
+  [Peer]: Fine thanks!
+>                                        ← prompt is blank...
+  (↑ Up)                                  ...press up arrow...
+> How's it going?                         ← previous entry recalled instantly
+  (Press Enter to resend or edit first)   ...edit or submit
 ```
 
 ### 2. Settings & Help Menu
@@ -221,14 +232,15 @@ Default download directory updated to: /Users/abhishekkumar/Downloads
 
 ### 5. Send a File
 Use `/file` followed by the absolute or relative file path (quotes and spaces are automatically trimmed):
-```text
+
 > /file "/Users/abhishekkumar/Documents/sample.pdf"
 Sent file offer for 'sample.pdf'. Waiting for peer approval...
 ```
 
 ### 6. Accept / Reject Incoming Files
+
 When a peer offers a file, you will be prompted to accept or decline:
-```text
+
 [Incoming File Offer]: 'sample.pdf' (1048576 bytes)
 Do you want to accept this file? (y/n): y
 
