@@ -38,6 +38,7 @@ graphify-out/
 tmp/
 temp/
 dist/
+.DS_Store
 
 # binaries
 lan-p2p*

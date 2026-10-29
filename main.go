@@ -288,7 +288,7 @@ func startTerminalChat(dc *webrtc.DataChannel) {
 		// 0. Handle incoming file acceptance prompt state
 		if waitingForAcceptance {
 			waitingForAcceptance = false
-			answer := strings.ToLower(text)
+			answer := strings.TrimSpace(strings.ToLower(text))
 			if answer == "y" || answer == "yes" {
 				// Send ACCEPT response
 				resp := Message{
@@ -315,6 +315,8 @@ func startTerminalChat(dc *webrtc.DataChannel) {
 		// 1. Handle /dir <path> command
 		if strings.HasPrefix(text, "/dir ") {
 			dirPath := strings.TrimPrefix(text, "/dir ")
+			dirPath = strings.TrimSpace(dirPath)
+			dirPath = strings.Trim(dirPath, "\"'")
 			info, err := os.Stat(dirPath)
 			if err != nil || !info.IsDir() {
 				fmt.Printf("Invalid directory path: %s\n> ", dirPath)
@@ -329,6 +331,8 @@ func startTerminalChat(dc *webrtc.DataChannel) {
 		// 2. Handle /file <path> command
 		if strings.HasPrefix(text, "/file ") {
 			rawPath := strings.TrimPrefix(text, "/file ")
+			rawPath = strings.TrimSpace(rawPath)
+			rawPath = strings.Trim(rawPath, "\"'")
 			info, err := os.Stat(rawPath)
 			if err != nil {
 				fmt.Printf("Error accessing file: %v\n> ", err)
@@ -457,7 +461,7 @@ EXAMPLES
 
 func printVersion() {
 	fmt.Println(`
-lan-p2p version 1.0.0
+lan-p2p version 1.0.1
 Copyright (c) 2026 Abhishek Kumar
 Licensed under the MIT License
   `)
