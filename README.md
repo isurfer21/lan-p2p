@@ -81,17 +81,87 @@ A lightweight, terminal-based peer-to-peer (P2P) chat and file-sharing tool writ
 
 ---
 
-## Usage Guide & Commands
+## Launching the Application
+
+### CLI Flags
+
+| Flag | Description |
+|------|-------------|
+| `-h, --help` | Display the full help menu with usage and examples |
+| `-v, --version` | Show version details |
+
+**Help Menu:**
+
+```text
+Usage:
+  lan-p2p [command] [arguments] [flags]
+
+COMMANDS
+  listen, host      Start listening on a local port
+                    Arguments: [<PORT>] (default: 8080)
+                    Example:   lan-p2p listen 9000
+
+  connect, join     Connect to a peer node
+                    Arguments: [<IP>][:<PORT>]
+                    Defaults to: 127.0.0.1:8080
+                    Examples:
+                      lan-p2p connect 192.168.1.12
+                      lan-p2p connect :9000
+                      lan-p2p connect 192.168.1.12:9000
+
+FLAGS
+  -h, --help        Show the help menu
+  -v, --version     Show version details
+```
+
+### Mode 1: Testing on the Same Machine (Two Terminal Windows)
+
+1. **Terminal 1 (Receiver/Listener):**
+   ```bash
+   ./lan-p2p listen
+   # or with a custom port:
+   ./lan-p2p listen 9000
+   ```
+
+2. **Terminal 2 (Initiator/Connector):**
+   ```bash
+   ./lan-p2p connect 127.0.0.1
+   ```
+
+### Mode 2: Testing Across Two Separate Devices on the Same LAN
+
+1. **Find the Receiver's Local IP:**
+   - **macOS/Linux:** `ifconfig` or `ip a` (e.g., `192.168.1.16`)
+   - **Windows:** `ipconfig`
+
+2. **On Device A (Receiver):**
+   ```bash
+   ./lan-p2p listen 8080
+   # or use the alias:
+   ./lan-p2p host 8080
+   ```
+
+3. **On Device B (Initiator):**
+   ```bash
+   ./lan-p2p connect 192.168.1.16
+   # or with a custom port:
+   ./lan-p2p connect 192.168.1.16:9000
+   # or use the alias:
+   ./lan-p2p join 192.168.1.16:9000
+   ```
+
+---
+
+## Commands During a Session
 
 Once connected, a confirmation header will appear:
 
 ```text
 =======================================================
-🎉 P2P WEBRTC DATA CHANNEL ESTABLISHED!
+P2P WEBRTC DATA CHANNEL ESTABLISHED!
 Commands:
   - Type any message and press Enter to chat.
   - Type '/help' or '/?' for this menu.
-Current Download Directory: .
 =======================================================
 > 
 ```
@@ -105,20 +175,29 @@ Type any text and press **Enter** to send a real-time message to your peer. If y
 [Alice]: Hey there!
 ```
 
-### 2. Help Menu
+### 2. Settings & Help Menu
 
-At any time during a session, press `/help` or `/?` for a full command reference:
+At any time during a session, press `/help` or `/?` to see your current settings and all available commands:
 
 ```text
 > /help
-Available commands:
-Your Display Name: (not set)
-  Type '/dir <path>' to set default download directory.
-  Type '/file <path>' to send a file.
-  Type '/user <name>' to set your display name.
-  Type '/help' or '/?' for this menu.
+Current Settings:
 
-> 
+  Display Name: (not set)
+  Download Directory: .
+
+Available Commands:
+
+  /user <name>       Set your display name
+                     Example: /user Alice
+
+  /file <path>       Send a file to the connected peer
+                     Example: /file ~/Documents/sample.pdf
+
+  /dir <path>        Set download directory (defaults to current dir)
+                     Example: /dir ~/Downloads/
+
+  /help, /?          Display this help menu
 ```
 
 ### 3. Set Your Display Name
@@ -128,7 +207,7 @@ Use `/user <name>` to set an identity that peers see instead of the generic `[Pe
 ```text
 > /user Alice
 Display name set to: 'Alice'
-[*] Peer's display name updated to: 'Bob'
+[*] Peer's display name updated to: 'Bob"
 > Hey Bob!
 [Alice]: Hi Alice!
 ```

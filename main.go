@@ -38,13 +38,20 @@ func main() {
 	}
 
 	if len(os.Args) < 2 {
-		fmt.Println("Usage:")
-		fmt.Println("  Receiver: go run main.go listen")
-		fmt.Println("  Initiator: go run main.go connect <RECEIVER_IP>")
+		printHelp()
 		return
 	}
 
 	mode := os.Args[1]
+
+	switch mode {
+	case "-h", "--help":
+		printHelp()
+		return
+	case "-v", "--version":
+		printVersion()
+		return
+	}
 
 	peerConnection, err := webrtc.NewPeerConnection(config)
 	if err != nil {
@@ -52,14 +59,25 @@ func main() {
 	}
 	defer peerConnection.Close()
 
-	if mode == "listen" {
-		listener, err := net.Listen("tcp", ":8080")
+	if mode == "listen" || mode == "host" {
+		// 1. Set the default fallback value first
+		listenerPort := "8080"
+
+		// 2. Safely check if the argument was actually provided
+		if len(os.Args) >= 3 {
+			listenerPort = os.Args[2]
+		} else {
+			// Optional: Warn the user but gracefully fall back to the default
+			fmt.Println("No port provided. Defaulting to 8080. Usage: lan-p2p listen 8090")
+		}
+
+		listener, err := net.Listen("tcp", ":"+listenerPort)
 		if err != nil {
 			panic(err)
 		}
 		defer listener.Close()
 
-		fmt.Println("[*] Listening for connection on LAN port 8080...")
+		fmt.Printf("[*] Listening for connection on LAN port %s...\n", listenerPort)
 		conn, err := listener.Accept()
 		if err != nil {
 			panic(err)
@@ -100,12 +118,37 @@ func main() {
 		conn.Write([]byte(EncodeToString(peerConnection.LocalDescription()) + "\n"))
 		fmt.Println("[*] Handshake complete! Waiting for DataChannel to open...")
 
-	} else if mode == "connect" {
-		if len(os.Args) < 3 {
-			fmt.Println("Please provide receiver IP: go run main.go connect 127.0.0.1")
-			return
+	} else if mode == "connect" || mode == "join" {
+		// 1. Set the default fallback values first
+		receiverIP := "127.0.0.1"
+		receiverPort := "8080"
+
+		// 2. Safely check if the argument was actually provided
+		if len(os.Args) >= 3 {
+			input := os.Args[2]
+
+			// net.SplitHostPort expects a colon. If missing (e.g., "192.168.1.12"),
+			// it treats the entire string as the host/IP.
+			if !strings.Contains(input, ":") {
+				receiverIP = input
+			} else {
+				// If a colon is present, split it into IP and Port
+				host, port, err := net.SplitHostPort(input)
+				if err == nil {
+					// Only override defaults if the extracted parts are not empty
+					if host != "" {
+						receiverIP = host
+					}
+					if port != "" {
+						receiverPort = port
+					}
+				} else {
+					fmt.Printf("Warning: Invalid format '%s'. Using defaults.\n", input)
+				}
+			}
+		} else {
+			fmt.Println("No address provided. Defaulting to 127.0.0.1:8080. Usage: lan-p2p connect 192.168.1.12:8090")
 		}
-		receiverIP := os.Args[2]
 
 		dataChannel, err := peerConnection.CreateDataChannel("p2p-data", nil)
 		if err != nil {
@@ -125,8 +168,8 @@ func main() {
 		gatherComplete := webrtc.GatheringCompletePromise(peerConnection)
 		<-gatherComplete
 
-		fmt.Printf("[*] Connecting to receiver at %s:8080...\n", receiverIP)
-		conn, err := net.DialTimeout("tcp", receiverIP+":8080", 3*time.Second)
+		fmt.Printf("[*] Connecting to receiver at %s:%s...\n", receiverIP, receiverPort)
+		conn, err := net.DialTimeout("tcp", receiverIP+":"+receiverPort, 3*time.Second)
 		if err != nil {
 			fmt.Printf("[-] Connection failed: %v\n", err)
 			return
@@ -156,11 +199,10 @@ func main() {
 func setupDataChannel(dc *webrtc.DataChannel) {
 	dc.OnOpen(func() {
 		fmt.Printf("\n=======================================================\n")
-		fmt.Printf("🎉 P2P WEBRTC DATA CHANNEL ESTABLISHED!\n")
+		fmt.Printf("P2P WEBRTC DATA CHANNEL ESTABLISHED!\n")
 		fmt.Printf("Commands:\n")
 		fmt.Printf("  - Type any message and press Enter to chat.\n")
 		fmt.Printf("  - Type '/help' or '/?' for this menu.\n")
-		fmt.Printf("Current Download Directory: %s\n", defaultDownloadDir)
 		fmt.Printf("=======================================================\n> ")
 		go startTerminalChat(dc)
 	})
@@ -193,7 +235,7 @@ func setupDataChannel(dc *webrtc.DataChannel) {
 
 		case "DISPLAY_NAME":
 			peerName = m.Content
-			fmt.Printf("[*] Peer's display name updated to: '%s'\n", m.Content)
+			fmt.Printf("\r[*] Peer's display name updated to: '%s\"\n> ", m.Content)
 
 		case "FILE_OFFER":
 			pendingOffer = &m
@@ -323,17 +365,26 @@ func startTerminalChat(dc *webrtc.DataChannel) {
 
 		// 4. Handle /help or /? command
 		if strings.HasPrefix(text, "/help") || text == "/?" {
-			var line string
+			fmt.Printf("Current Settings:\n\n")
 			if displayName != "" {
-				line = fmt.Sprintf("Your Display Name: %s\n", displayName)
+				fmt.Printf("  Display Name: %s\n", displayName)
 			} else {
-				line = "Your Display Name: (not set)\n"
+				fmt.Printf("  Display Name: (not set)\n")
 			}
-			fmt.Printf(`Available commands:
-` + line + `  Type '/dir <path>' to set default download directory.
-  Type '/file <path>' to send a file.
-  Type '/user <name>' to set your display name.
-  Type '/help' or '/?' for this menu.
+			fmt.Printf("  Download Directory: %s\n", defaultDownloadDir)
+			fmt.Printf(`
+Available Commands:
+
+  /user <name>       Set your display name
+                     Example: /user Alice
+
+  /file <path>       Send a file to the connected peer
+                     Example: /file ~/Documents/sample.pdf
+
+  /dir <path>        Set download directory (defaults to current dir)
+                     Example: /dir ~/Downloads/
+
+  /help, /?          Display this help menu
 
 > `)
 			continue
@@ -373,4 +424,41 @@ func EncodeToString(sd *webrtc.SessionDescription) string {
 func DecodeFromString(str string, sd *webrtc.SessionDescription) {
 	b, _ := base64.StdEncoding.DecodeString(strings.TrimSpace(str))
 	json.Unmarshal(b, sd)
+}
+
+func printHelp() {
+	fmt.Println(`
+LAN P2P — Chat & File Sharing Application
+
+USAGE
+  lan-p2p [command] [arguments] [flags]
+
+COMMANDS
+  listen, host      Start listening on a local port
+                    Arguments: [<PORT>] (default: 8080)
+                    Example:   lan-p2p listen 9000
+
+  connect, join     Connect to a peer node
+                    Arguments: [<IP>][:<PORT>] (default: 127.0.0.1:8080)
+                    Examples:  lan-p2p connect 192.168.1.12
+                               lan-p2p connect :9000
+                               lan-p2p connect 192.168.1.12:9000
+
+FLAGS
+  -h, --help        Show the help menu
+  -v, --version     Show version details
+
+EXAMPLES
+  lan-p2p listen
+  lan-p2p connect 127.0.0.1
+  lan-p2p connect :8080
+  `)
+}
+
+func printVersion() {
+	fmt.Println(`
+lan-p2p version 1.0.0
+Copyright (c) 2026 Abhishek Kumar
+Licensed under the MIT License
+  `)
 }
