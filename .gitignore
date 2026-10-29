@@ -37,6 +37,7 @@ go.work.sum
 graphify-out/
 tmp/
 temp/
+dist/
 
 # binaries
 lan-p2p*
